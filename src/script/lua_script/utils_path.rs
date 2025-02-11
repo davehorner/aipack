@@ -21,6 +21,9 @@ use std::path::{Path, MAIN_SEPARATOR};
 pub fn init_module(lua: &Lua, runtime_context: &RuntimeContext) -> Result<Table> {
 	let table = lua.create_table()?;
 
+	// -- split
+	let path_split_fn = lua.create_function(path_split)?;
+
 	// -- exists
 	let ctx = runtime_context.clone();
 	let path_exists_fn = lua.create_function(move |_lua, path: String| path_exists(&ctx, path))?;
@@ -48,11 +51,35 @@ pub fn init_module(lua: &Lua, runtime_context: &RuntimeContext) -> Result<Table>
 	table.set("is_dir", path_is_dir_fn)?;
 	table.set("parent", path_parent_fn)?;
 	table.set("join", path_join_fn)?;
+	table.set("split", path_split_fn)?;
 
 	Ok(table)
 }
 
 // region:    --- Lua Functions
+
+/// ## Lua Documentation
+/// ```lua
+/// path.split(path: string) -> parent, filename
+/// ```
+/// {utils.path.split("some/path/to_file.md")} to create an array.
+///
+/// Split path into parent, filename.
+fn path_split(lua: &Lua, path: String) -> mlua::Result<MultiValue> {
+	let path_buf = std::path::PathBuf::from(&path);
+
+	let parent = path_buf.parent().map(|p| p.to_string_lossy().into_owned()).unwrap_or_default();
+	let filename = path_buf
+		.file_name()
+		.map(|f| f.to_string_lossy().into_owned())
+		.unwrap_or_default();
+	let parent_str = lua.create_string(&parent)?;
+	let filename_str = lua.create_string(&filename)?;
+	Ok(MultiValue::from_vec(vec![
+		mlua::Value::String(parent_str),
+		mlua::Value::String(filename_str),
+	]))
+}
 
 /// ## Lua Documentation
 /// ```lua
@@ -157,8 +184,6 @@ mod tests {
 	//!
 	//! NOTE 2: All the tests here are with run_reflective_agent that have the tests-data/sandbox-01 as current dir.
 	type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>; // For tests.
-
-	use std::path::MAIN_SEPARATOR;
 
 	use crate::_test_support::run_reflective_agent;
 
