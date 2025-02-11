@@ -10,13 +10,13 @@
 //! * `path::is_file(path: string) -> bool`
 //! * `path::is_dir(path: string) -> bool`
 //! * `path::parent(path: string) -> string | nil`
-//! * `path::join(path: string) -> string | nil`
+//! * `path::join(paths: args | table) -> string | nil`
+//! * `path::split(path: string) -> (string parent, string filename) | nil`
 
 use crate::run::{PathResolver, RuntimeContext};
 use crate::Result;
 use mlua::{Lua, Table, Value};
-use std::path::PathBuf;
-use std::path::{Path, MAIN_SEPARATOR};
+use std::path::{PathBuf,Path, MAIN_SEPARATOR};
 
 pub fn init_module(lua: &Lua, runtime_context: &RuntimeContext) -> Result<Table> {
 	let table = lua.create_table()?;
@@ -37,9 +37,6 @@ pub fn init_module(lua: &Lua, runtime_context: &RuntimeContext) -> Result<Table>
 	let path_is_dir_fn = lua.create_function(move |_lua, path: String| path_is_dir(&ctx, path))?;
 
 	// -- join
-	let ctx = runtime_context.clone();
-
-	// let path_join_fn = lua.create_function(move |_lua, paths: Vec<String>| path_join(&ctx, paths))?;
 	let path_join_fn = lua.create_function(path_join)?;
 
 	// -- parent
@@ -65,7 +62,7 @@ pub fn init_module(lua: &Lua, runtime_context: &RuntimeContext) -> Result<Table>
 /// {utils.path.split("some/path/to_file.md")} to create an array.
 ///
 /// Split path into parent, filename.
-fn path_split(lua: &Lua, path: String) -> mlua::Result<MultiValue> {
+fn path_split(lua: &Lua, path: String) -> mlua::Result<mlua::MultiValue> {
 	let path_buf = std::path::PathBuf::from(&path);
 
 	let parent = path_buf.parent().map(|p| p.to_string_lossy().into_owned()).unwrap_or_default();
@@ -75,7 +72,7 @@ fn path_split(lua: &Lua, path: String) -> mlua::Result<MultiValue> {
 		.unwrap_or_default();
 	let parent_str = lua.create_string(&parent)?;
 	let filename_str = lua.create_string(&filename)?;
-	Ok(MultiValue::from_vec(vec![
+	Ok(mlua::MultiValue::from_vec(vec![
 		mlua::Value::String(parent_str),
 		mlua::Value::String(filename_str),
 	]))
@@ -185,7 +182,9 @@ mod tests {
 	//! NOTE 2: All the tests here are with run_reflective_agent that have the tests-data/sandbox-01 as current dir.
 	type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>; // For tests.
 
-	use crate::_test_support::run_reflective_agent;
+	use std::path::MAIN_SEPARATOR;
+
+    use crate::_test_support::run_reflective_agent;
 
 	#[tokio::test]
 	async fn test_lua_path_exists_true() -> Result<()> {
@@ -361,6 +360,7 @@ mod tests {
 	#[tokio::test]
 	async fn test_lua_path_join() -> Result<()> {
 		// -- Fixtures
+        		// -- Fixtures
 		let cases = &[
 			// Standard paths
 			(
@@ -408,11 +408,51 @@ mod tests {
 		// -- Exec & Check
 		for (lua_table, expected_path) in cases {
 			let res = run_reflective_agent(&format!(r#"return utils.path.join({lua_table})"#), None).await?;
-
-			println!("🔍 Debug: Lua returned = {:?}", res);
-
 			let result_path = res.as_str().ok_or("Should return a string")?;
 			assert_eq!(result_path, expected_path, "Path mismatch for table input: {lua_table}");
+		}
+
+		Ok(())
+	}
+    	#[tokio::test]
+	async fn test_lua_path_split() -> Result<()> {
+		// -- Fixtures
+		let paths = &[
+			("some/path/to_file.md", "some/path", "to_file.md"),
+			("folder/file.txt", "folder", "file.txt"),
+			("justafile.md", "", "justafile.md"), // No parent directory
+			("/absolute/path/file.log", "/absolute/path", "file.log"),
+			("/file_at_root", "/", "file_at_root"),
+			("trailing/slash/", "trailing", "slash"), // Directory with no file
+		];
+
+		// -- Exec & Check
+		for (path, expected_parent, expected_filename) in paths {
+			let res = run_reflective_agent(
+				&format!(
+					r#"
+    local parent, filename = utils.path.split("{path}")
+    return {{ parent, filename }} -- Wrap values in a Lua table
+"#
+				),
+				None,
+			)
+			.await?;
+
+			let res_array = res.as_array().ok_or("Expected an array from Lua function")?;
+
+			let parent = res_array
+				.get(0)
+				.and_then(|v| v.as_str())
+				.ok_or("First value should be a string")?;
+
+			let filename = res_array
+				.get(1)
+				.and_then(|v| v.as_str())
+				.ok_or("Second value should be a string")?;
+
+			assert_eq!(parent, *expected_parent, "Parent mismatch for path: {path}");
+			assert_eq!(filename, *expected_filename, "Filename mismatch for path: {path}");
 		}
 
 		Ok(())
