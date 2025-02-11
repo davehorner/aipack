@@ -48,8 +48,6 @@ pub fn init_module(lua: &Lua, runtime_context: &RuntimeContext) -> mlua::Result<
 
     // Inject into Lua as `devai_config`
     lua.globals().set("devai_config", lua_table)?;
-     println!("✅ devai_config injected into Lua.");
-
 
     Ok(())
 }
