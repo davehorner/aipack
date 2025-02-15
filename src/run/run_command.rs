@@ -41,7 +41,7 @@ pub async fn run_command_agent(
 	return_output_values: bool,
 ) -> Result<RunCommandResponse> {
 	let hub = get_hub();
-	let concurrency = agent.config().input_concurrency().unwrap_or(DEFAULT_CONCURRENCY);
+	let concurrency = agent.options().input_concurrency().unwrap_or(DEFAULT_CONCURRENCY);
 
 	// -- Print the run info
 	let genai_info = get_genai_info(agent);
@@ -76,6 +76,7 @@ pub async fn run_command_agent(
 		let lua_inputs = inputs.clone().map(Value::Array).unwrap_or_default();
 		lua_scope.set("inputs", lua_engine.serde_to_lua_value(lua_inputs)?)?;
 		lua_scope.set("CTX", literals.to_lua(&lua_engine)?)?;
+		lua_scope.set("options", agent.options())?;
 
 		let lua_value = lua_engine.eval(before_all_script, Some(lua_scope), Some(&[agent.file_dir()?.to_str()]))?;
 		let before_all_res = serde_json::to_value(lua_value)?;
@@ -224,6 +225,7 @@ pub async fn run_command_agent(
 		lua_scope.set("outputs", lua_engine.serde_to_lua_value(outputs_value)?)?;
 		lua_scope.set("before_all", lua_engine.serde_to_lua_value(before_all)?)?;
 		lua_scope.set("CTX", literals.to_lua(&lua_engine)?)?;
+		lua_scope.set("options", agent.options())?;
 
 		let lua_value = lua_engine.eval(after_all_script, Some(lua_scope), Some(&[agent.file_dir()?.to_str()]))?;
 		Some(serde_json::to_value(lua_value)?)
@@ -306,7 +308,7 @@ fn get_input_label(input: &Value) -> Option<String> {
 fn get_genai_info(agent: &Agent) -> String {
 	let mut genai_infos: Vec<String> = vec![];
 
-	if let Some(temp) = agent.config().temperature() {
+	if let Some(temp) = agent.options().temperature() {
 		genai_infos.push(format!("temperature: {temp}"));
 	}
 

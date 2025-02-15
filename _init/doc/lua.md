@@ -49,6 +49,9 @@ utils.file.append("doc/some-file.md", "some new content")       -- void (no retu
 -- List files matching a glob pattern
 local all_doc_files = utils.file.list("doc/**/*.md")            -- {FileMeta, ...}
 
+-- List files and load their content
+local all_files = utils.file.list_load({"doc/**/*.md", "src/**/*.rs"})           -- {FileRecord, ...}
+
 -- Get the first file reference matching a glob pattern
 local first_doc_file = utils.file.first("doc/**/*.md")          -- FileMeta | Nil
 
@@ -66,13 +69,19 @@ local sections = utils.file.load_md_sections("doc/readme.md", "# Summary")
 
 ```lua
 -- Check if a path exists
-local exists = path.exists("doc/some-file.md")         -- bool
+local exists = utils.path.exists("doc/some-file.md")         -- bool
 -- Check if a path is a file
-local is_file = path.is_file("doc/some-file.md")       -- bool
+local is_file = utils.path.is_file("doc/some-file.md")       -- bool
 -- Check if a path is a directory
-local is_dir = path.is_dir("doc/")                     -- bool
+local is_dir = utils.path.is_dir("doc/")                     -- bool
 -- Get the parent directory of a path
-local parent_dir = path.parent("doc/some-file.md")     -- string
+local parent_dir = utils.path.parent("doc/some-file.md")     -- string
+-- Split for parent and filename
+local parent_dir, file_name = utils.path.split("path/to/some-file.md") -- parent, file
+-- returns "path/to", "some-file.md"
+-- Join path
+local path = utils.path.join("path", "to", "some-file.md")   -- string
+-- "path/to/some-file.md"
 ```
 
 
@@ -120,9 +129,12 @@ local updated_content = utils.text.replace_markers(content, new_sections) -- str
 See [MdBlock](#mdblock)
 
 ```lua
--- Extract the markdown blocks (if no name, all blocks will be extracted)
-local blocks = utils.md.extract_blocks("js")                 -- {MdBlock}
--- returns {} if no block found
+-- Extract all blocks
+utils.md.extract_blocks(md_content: string) -> Vec<MdBlock>
+-- Extract blocks for the language 'lang'
+utils.md.extract_blocks(md_content: string, lang: string) -> Vec<MdBlock>
+-- Extract blocks (with or without language, and extrude: content, which the remaining content)
+utils.md.extract_blocks(md_content: String, {lang: string, extrude: "content"})
 
 -- If content starts with ```, it will remove the first and last ```, and return the content in between
 -- Otherwise, it returns the original content
@@ -166,12 +178,34 @@ utils.git.restore("src/main.rs")                       -- void
 
 ### utils.web
 
-See [WebResponse](#webresponse), [WebError](#weberror) for return types.
+See [WebResponse](#webresponse).
 
 ```lua
--- Fetch content from a URL
-local content = utils.web.get("https://example.com")   -- WebResponse / WebError
+-- Fetch web_response from a URL (see WebResponse object)
+local web_response = utils.web.get("https://example.com")   -- WebResponse 
+-- Return an exception when a web request cannot be executed (e.g., bad URL, remote server not available)
+
+-- Do a post 
+local web_response = utils.web.post("https://httpbin.org/post", { some = "stuff"})
+-- if data is table, will be serialize as json, and content_type `application/json` 
+-- If data is string, then, just as is, and `plain/text`
 ```
+
+#### WebResponse
+
+The `WebResponse`
+
+```lua
+{
+ success = true,
+ status = number,
+ url = string,
+ content = string | table, 
+}
+-- .content will be Lua Table if response content_type is application/json
+--          otherwie, just string
+```
+
 
 ## utils.html
 
@@ -181,11 +215,11 @@ local cleaned_html = utils.html.prune_to_content(html_content)  -- string
 ```
 ## utils.cmd
 
-See [CmdResponse](#cmdresponse), [CmdError](#cmderror) for return types.
+See [CmdResponse](#cmdresponse)
 
 ```lua
 -- Execute a system command utils.cmd.exec(cmd_name, cmd_args)
-local result = utils.cmd.exec("ls", {"-ll", "./**/*.md"})  -- CmdResponse / CmdError
+local result = utils.cmd.exec("ls", {"-ll", "./**/*.md"})  -- CmdResponse
 ```
 
 ## devai
@@ -316,44 +350,5 @@ The `CmdResponse` is returned by `utils.cmd.exec`
   stdout = string,  -- Standard output from the command
   stderr = string,  -- Standard error from the command
   exit   = number   -- Exit code (0 for success)
-}
-```
-
-## CmdError
-
-When `utils.cmd.exec` fails, here is the type:
-
-```lua
-{
-  stdout = string | nil,  -- Standard output if available
-  stderr = string | nil,  -- Standard error if available
-  exit   = number | nil,  -- Exit code if available
-  error  = string         -- Error message from command execution
-}
-```
-
-## WebResponse
-
-The `WebResponse`
-
-```lua
-{
- success = true,
- status = number,
- url = string,
- content = string,
-}
-```
-
-## WebError
-
-In case of an error, the `WebError` is:
-
-```lua
-{
- success = false,
- status  = number | nil,
- url     = string,
- error   = string,
 }
 ```
