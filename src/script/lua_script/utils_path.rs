@@ -28,6 +28,7 @@ use mlua::{Value, Variadic};
 use simple_fs::SPath;
 use std::path::PathBuf;
 use std::path::{Path, MAIN_SEPARATOR};
+use std::path::Component;
 
 pub fn init_module(lua: &Lua, runtime_context: &RuntimeContext) -> Result<Table> {
 	let table = lua.create_table()?;
@@ -190,62 +191,58 @@ pub fn path_join_non_os_normalized(lua: &Lua, paths: Variadic<Value>) -> mlua::R
 /// e.g. `"C:"`, or it starts with a backslash), then the join is done using backslashes (and any forward slashes
 /// in the components are converted to backslashes). Otherwise, the platform’s native separator is used.
 pub fn path_join_os_normalized(lua: &Lua, paths: Variadic<Value>) -> mlua::Result<Value> {
-	let mut comps = Vec::new();
-	if paths.is_empty() {
-		return Ok(Value::Nil);
-	}
-	if let Some(Value::Table(table)) = paths.first() {
-		for pair in table.clone().pairs::<mlua::Integer, String>() {
-			let (_, s) = pair?;
-			if !s.is_empty() {
-				comps.push(s);
-			}
-		}
-	} else {
-		for arg in paths {
-			if let Value::String(s) = arg {
-				let s = s.to_str()?;
-				if !s.is_empty() {
-					comps.push(s.to_string());
-				}
-			}
-		}
-	}
-	if comps.is_empty() {
-		return Ok(Value::String(lua.create_string("")?));
-	}
-	let is_windows = is_windows_style(&comps[0]);
-	let sep: char = if is_windows { '\\' } else { MAIN_SEPARATOR };
-	let mut result = String::new();
-	if is_windows {
-		// For Windows‑style, trim trailing slashes from the first component and convert any '/' to '\\'.
-		let first = comps[0].trim_end_matches(['\\', '/']).replace("/", "\\");
-		result.push_str(&first);
-		for comp in comps.iter().skip(1) {
-			// For subsequent components, trim both leading and trailing slashes and convert '/' to '\\'.
-			let part = comp.trim_matches(|c| c == '\\' || c == '/').replace("/", "\\");
-			if !part.is_empty() {
-				if !result.ends_with(sep) {
-					result.push(sep);
-				}
-				result.push_str(&part);
-			}
-		}
-	} else {
-		// For non–Windows style, simply trim extra slashes.
-		let first = comps[0].trim_end_matches(['\\', '/']);
-		result.push_str(first);
-		for comp in comps.iter().skip(1) {
-			let part = comp.trim_matches(|c| c == '\\' || c == '/');
-			if !part.is_empty() {
-				if !result.ends_with(sep) {
-					result.push(sep);
-				}
-				result.push_str(part);
-			}
-		}
-	}
-	Ok(Value::String(lua.create_string(&result)?))
+    // Collect normalized path components as OsStrings.
+    let mut components = Vec::new();
+
+    if paths.is_empty() {
+        return Ok(mlua::Value::Nil);
+    }
+
+    // Helper closure to break a &str into its normalized components.
+    let mut process_str = |s: &str| {
+        if !s.is_empty() {
+            // Create a Path and iterate over its normalized components.
+            let path = Path::new(s);
+            for comp in path.components() {
+                components.push(comp.as_os_str().to_os_string());
+            }
+        }
+    };
+
+    // If the first argument is a table, treat it as a table of strings.
+    if let Some(mlua::Value::Table(table)) = paths.first() {
+        for pair in table.clone().pairs::<mlua::Integer, String>() {
+            let (_, s) = pair?;
+            process_str(&s);
+        }
+    } else {
+        // Otherwise, treat each Lua value as a string.
+        for arg in paths {
+            if let mlua::Value::String(s) = arg {
+                let s_str = s.to_str()?;
+                process_str(&s_str);
+            }
+        }
+    }
+
+    // If no valid components were gathered, return an empty string.
+    if components.is_empty() {
+        return Ok(mlua::Value::String(lua.create_string("")?));
+    }
+
+    // Rebuild the path from the collected components.
+    let mut joined = PathBuf::new();
+    for comp in &components {
+        joined.push(comp);
+    }
+
+    // Convert the joined path to a Rust String using the OS-native formatting.
+    let result = joined
+        .into_os_string()
+        .into_string()
+        .unwrap_or_else(|os_str| os_str.to_string_lossy().into_owned());
+
+    Ok(mlua::Value::String(lua.create_string(&result)?))
 }
 
 /// Returns true if the given string looks like a Windows‑style path.
@@ -541,7 +538,9 @@ mod tests {
 				format!("folder{}subfolder{}file.txt", MAIN_SEPARATOR, MAIN_SEPARATOR),
 			),
 			(r#"{"single"}"#, "single".to_string()),
-			(r#"{"leading", "", "trailing"}"#, "leading/trailing".to_string()),
+			(r#"{"leading", "", "trailing"}"#, 
+                format!("leading{}trailing", MAIN_SEPARATOR)
+            ),
 			(
 				r#"{"C:\\Users", "Admin", "Documents\\file.txt"}"#,
 				"C:\\Users\\Admin\\Documents\\file.txt".to_string(),
