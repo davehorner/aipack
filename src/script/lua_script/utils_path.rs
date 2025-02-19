@@ -190,62 +190,63 @@ pub fn path_join_non_os_normalized(lua: &Lua, paths: Variadic<Value>) -> mlua::R
 /// e.g. `"C:"`, or it starts with a backslash), then the join is done using backslashes (and any forward slashes
 /// in the components are converted to backslashes). Otherwise, the platform’s native separator is used.
 pub fn path_join_os_normalized(lua: &Lua, paths: Variadic<Value>) -> mlua::Result<Value> {
-	let mut comps = Vec::new();
-	if paths.is_empty() {
-		return Ok(Value::Nil);
-	}
-	if let Some(Value::Table(table)) = paths.first() {
-		for pair in table.clone().pairs::<mlua::Integer, String>() {
-			let (_, s) = pair?;
-			if !s.is_empty() {
-				comps.push(s);
-			}
-		}
-	} else {
-		for arg in paths {
-			if let Value::String(s) = arg {
-				let s = s.to_str()?;
-				if !s.is_empty() {
-					comps.push(s.to_string());
-				}
-			}
-		}
-	}
-	if comps.is_empty() {
-		return Ok(Value::String(lua.create_string("")?));
-	}
-	let is_windows = is_windows_style(&comps[0]);
-	let sep: char = if is_windows { '\\' } else { MAIN_SEPARATOR };
-	let mut result = String::new();
-	if is_windows {
-		// For Windows‑style, trim trailing slashes from the first component and convert any '/' to '\\'.
-		let first = comps[0].trim_end_matches(['\\', '/']).replace("/", "\\");
-		result.push_str(&first);
-		for comp in comps.iter().skip(1) {
-			// For subsequent components, trim both leading and trailing slashes and convert '/' to '\\'.
-			let part = comp.trim_matches(|c| c == '\\' || c == '/').replace("/", "\\");
-			if !part.is_empty() {
-				if !result.ends_with(sep) {
-					result.push(sep);
-				}
-				result.push_str(&part);
-			}
-		}
-	} else {
-		// For non–Windows style, simply trim extra slashes.
-		let first = comps[0].trim_end_matches(['\\', '/']);
-		result.push_str(first);
-		for comp in comps.iter().skip(1) {
-			let part = comp.trim_matches(|c| c == '\\' || c == '/');
-			if !part.is_empty() {
-				if !result.ends_with(sep) {
-					result.push(sep);
-				}
-				result.push_str(part);
-			}
-		}
-	}
-	Ok(Value::String(lua.create_string(&result)?))
+    // Gather nonempty path components as PathBuf values.
+    let mut components: Vec<PathBuf> = Vec::new();
+    
+    if paths.is_empty() {
+        return Ok(mlua::Value::Nil);
+    }
+    
+    if let Some(mlua::Value::Table(table)) = paths.first() {
+        // In this branch, we expect a table of Rust Strings.
+        for pair in table.clone().pairs::<mlua::Integer, String>() {
+            let (_, s) = pair?;
+            if !s.is_empty() {
+                components.push(PathBuf::from(s));
+            }
+        }
+    } else {
+        // Each argument is expected to be a Lua string.
+        for arg in paths {
+            if let mlua::Value::String(s) = arg {
+                // Convert mlua::String (BorrowedStr) to a &str by dereferencing.
+                let s_str = s.to_str()?;
+                if !s_str.is_empty() {
+                    // Use `&*s_str` to ensure we pass a &str to Path::new.
+                    components.push(Path::new(&*s_str).to_path_buf());
+                }
+            }
+        }
+    }
+    
+    if components.is_empty() {
+        return Ok(mlua::Value::String(lua.create_string("")?));
+    }
+    
+    // Check if the first component appears to be a Windows‑style path.
+    let first_str = components[0].to_str().unwrap_or("");
+    let is_windows = is_windows_style(first_str);
+    
+    // Start with the first path, then join the rest.
+    let mut joined = components[0].clone();
+    for comp in components.iter().skip(1) {
+        joined.push(comp);
+    }
+    
+    // Convert the joined path to a string. Note that this uses the OS’s native formatting.
+    let mut result = joined.to_string_lossy().into_owned();
+    
+    // If the first component looked Windows‑style, ensure the output uses backslashes.
+    if is_windows {
+        result = result.replace("/", "\\");
+    } else {
+        // On non‑Windows platforms, ensure the native MAIN_SEPARATOR is used.
+        if MAIN_SEPARATOR != '/' {
+            result = result.replace("/", &MAIN_SEPARATOR.to_string());
+        }
+    }
+    
+    Ok(mlua::Value::String(lua.create_string(&result)?))
 }
 
 /// Returns true if the given string looks like a Windows‑style path.
