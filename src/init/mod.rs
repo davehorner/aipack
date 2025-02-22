@@ -1,6 +1,6 @@
 // region:    --- Module
 
-mod embedded_files;
+mod assets;
 mod migrate_devai;
 
 mod init_base;

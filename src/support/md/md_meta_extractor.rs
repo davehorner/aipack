@@ -3,14 +3,7 @@ use crate::types::MdBlock;
 use crate::Result;
 use serde_json::Value;
 
-///
-/// Extrude the meta code blocks, and compute the merge value of those blocks.
-///
-/// For example, will be bound to Lua as
-/// ```lua
-/// local value_obj, content = utils.text.meta_extract(content)
-/// ```
-pub fn meta_extrude(content: &str) -> Result<(Value, String)> {
+pub fn extract_meta(content: &str) -> Result<(Value, String)> {
 	let (meta_blocks, content) = extract_md_blocks_and_content(content, true)?;
 	let content = content.unwrap_or_default();
 
@@ -21,6 +14,8 @@ pub fn meta_extrude(content: &str) -> Result<(Value, String)> {
 
 // region:    --- Block Value Parser
 
+/// Will merge the meta blocks content (today support only toml)
+/// Return the serde_json value, and this will always be of Value
 fn merge_values(meta_blocks: Vec<MdBlock>) -> Result<Value> {
 	let mut values: Vec<Value> = Vec::new();
 
@@ -111,7 +106,7 @@ fn extract_md_blocks_and_content(content: &str, extrude: bool) -> Result<(Vec<Md
 			if in_block {
 				if in_candidate_meta_block {
 					if first_block_line {
-						if line.trim() == "#!meta" {
+						if line.trim().starts_with("#!meta") {
 							first_block_line = false;
 							action = Action::CaptureInMetaBlock
 						} else {
@@ -244,7 +239,7 @@ def some()
 	#[test]
 	fn test_meta_extrude_simple() -> Result<()> {
 		// -- Exec
-		let (value_root, content) = meta_extrude(FX_MD_SIMPLE)?;
+		let (value_root, content) = extract_meta(FX_MD_SIMPLE)?;
 
 		// -- Check
 		assert_eq!(value_root.x_get_f64("temperature")?, 0.0);

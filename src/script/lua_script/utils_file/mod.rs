@@ -5,7 +5,7 @@ mod file_md;
 
 use crate::run::RuntimeContext;
 use crate::script::lua_script::utils_file::file_common::{
-	file_append, file_ensure_exists, file_first, file_list, file_list_load, file_load, file_save,
+	file_append, file_ensure_exists, file_first, file_list, file_list_load, file_load, file_save, EnsureExistsOptions,
 };
 use crate::script::lua_script::utils_file::file_md::{file_load_md_sections, file_load_md_split_first};
 use crate::Result;
@@ -18,7 +18,8 @@ pub fn init_module(lua: &Lua, runtime_context: &RuntimeContext) -> Result<Table>
 
 	// -- load
 	let ctx = runtime_context.clone();
-	let file_load_fn = lua.create_function(move |lua, (path,): (String,)| file_load(lua, &ctx, path))?;
+	let file_load_fn =
+		lua.create_function(move |lua, (path, options): (String, Option<Value>)| file_load(lua, &ctx, path, options))?;
 
 	// -- save
 	let ctx = runtime_context.clone();
@@ -33,21 +34,27 @@ pub fn init_module(lua: &Lua, runtime_context: &RuntimeContext) -> Result<Table>
 	// -- ensure_exists
 	// (md_content, lang_name): (String, Option<String>)
 	let ctx = runtime_context.clone();
-	let file_ensure_exists_fn = lua.create_function(move |lua, (path, content): (String, Option<String>)| {
-		file_ensure_exists(lua, &ctx, path, content)
-	})?;
+	let file_ensure_exists_fn = lua.create_function(
+		move |lua, (path, content, options): (String, Option<String>, Option<EnsureExistsOptions>)| {
+			file_ensure_exists(lua, &ctx, path, content, options)
+		},
+	)?;
 
 	// -- list
 	let ctx = runtime_context.clone();
-	let file_list_fn = lua.create_function(move |lua, (globs,): (Value,)| file_list(lua, &ctx, globs))?;
+	let file_list_fn =
+		lua.create_function(move |lua, (globs, options): (Value, Option<Value>)| file_list(lua, &ctx, globs, options))?;
 
 	// -- list_load
 	let ctx = runtime_context.clone();
-	let file_list_load_fn = lua.create_function(move |lua, (globs,): (Value,)| file_list_load(lua, &ctx, globs))?;
+	let file_list_load_fn = lua.create_function(move |lua, (globs, options): (Value, Option<Value>)| {
+		file_list_load(lua, &ctx, globs, options)
+	})?;
 
 	// -- first
 	let ctx = runtime_context.clone();
-	let file_first_fn = lua.create_function(move |lua, (globs,): (Value,)| file_first(lua, &ctx, globs))?;
+	let file_first_fn = lua
+		.create_function(move |lua, (globs, options): (Value, Option<Value>)| file_first(lua, &ctx, globs, options))?;
 
 	// -- load_md_sections
 	let ctx = runtime_context.clone();

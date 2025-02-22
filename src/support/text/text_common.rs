@@ -3,7 +3,18 @@
 use crate::{Error, Result};
 use aho_corasick::AhoCorasick;
 use derive_more::derive::Display;
+use num_format::ToFormattedString;
 use std::borrow::Cow;
+use std::time::Duration;
+
+pub fn format_num(num: i64) -> String {
+	num.to_formatted_string(&num_format::Locale::en)
+}
+
+pub fn format_duration(duration: Duration) -> String {
+	let duration = Duration::from_millis(duration.as_millis() as u64);
+	humantime::format_duration(duration).to_string()
+}
 
 // region:    --- Ensure
 
@@ -176,7 +187,7 @@ mod tests {
 	use crate::_test_support::{assert_contains, assert_not_contains};
 
 	#[test]
-	fn test_replace_markers_simple() -> Result<()> {
+	fn test_support_text_replace_markers_simple() -> Result<()> {
 		// -- Setup & Fixtures
 		let markers = &("<<START>>", "<<END>>");
 		let content = r#"
@@ -211,7 +222,7 @@ And more content-03
 	}
 
 	#[test]
-	fn test_replace_markers_no_closing() -> Result<()> {
+	fn test_support_text_markers_no_closing() -> Result<()> {
 		// -- Setup & Fixtures
 		let markers = &("<<START>>", "<<END>>");
 		let content = r#"

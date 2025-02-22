@@ -1,5 +1,6 @@
 use crate::hub::get_hub;
 use crate::Result;
+use genai::chat::ChatOptions;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
@@ -25,6 +26,20 @@ pub struct AgentOptions {
 	model_aliases: Option<ModelAliases>,
 }
 
+// region:    --- Froms
+
+impl From<&AgentOptions> for ChatOptions {
+	fn from(agent_options: &AgentOptions) -> Self {
+		let mut chat_options = ChatOptions::default();
+		if let Some(temp) = agent_options.temperature() {
+			chat_options.temperature = Some(temp);
+		}
+		chat_options
+	}
+}
+
+// endregion: --- Froms
+
 // region:    --- ModelAliases
 
 /// TODO Must have a Arc<inner> for perf
@@ -43,6 +58,16 @@ impl ModelAliases {
 			}
 		}
 		self
+	}
+
+	pub fn merge_new(&self, aliases_ov: Option<ModelAliases>) -> ModelAliases {
+		let mut inner: HashMap<String, String> = self.inner.clone();
+		if let Some(aliases) = aliases_ov {
+			for (k, v) in aliases.inner {
+				inner.insert(k, v);
+			}
+		}
+		ModelAliases { inner }
 	}
 }
 
@@ -138,6 +163,8 @@ impl AgentOptions {
 	}
 
 	/// Merge the current options with a new options value, returning the merged `AgentOptions`.
+	///
+	/// Note: This will consume both, avoiding any new allocation
 	pub fn merge(self, options_ov: AgentOptions) -> Result<AgentOptions> {
 		let model_aliases = match self.model_aliases {
 			Some(aliases) => Some(aliases.merge(options_ov.model_aliases)),
@@ -147,6 +174,21 @@ impl AgentOptions {
 		Ok(AgentOptions {
 			legacy: options_ov.legacy, // only take the value of the legacy
 			model: options_ov.model.or(self.model),
+			temperature: options_ov.temperature.or(self.temperature),
+			input_concurrency: options_ov.input_concurrency.or(self.input_concurrency),
+			model_aliases,
+		})
+	}
+
+	pub fn merge_new(&self, options_ov: AgentOptions) -> Result<AgentOptions> {
+		let model_aliases = match &self.model_aliases {
+			Some(aliases) => Some(aliases.merge_new(options_ov.model_aliases)),
+			None => options_ov.model_aliases.clone(),
+		};
+
+		Ok(AgentOptions {
+			legacy: options_ov.legacy, // only take the value of the legacy
+			model: options_ov.model.or(self.model.clone()),
 			temperature: options_ov.temperature.or(self.temperature),
 			input_concurrency: options_ov.input_concurrency.or(self.input_concurrency),
 			model_aliases,

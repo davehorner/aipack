@@ -19,9 +19,6 @@ pub const CUSTOM_LUA_DIR: &str = "custom/lua";
 
 pub const DEFAULT_AGENT_DIR: &str = "default/agent";
 
-// -- Doc
-pub const DEVAI_DOC_DIR: &str = "doc";
-
 // -- New Agent Templates
 
 pub const DEVAI_NEW_CUSTOM_COMMAND_DIR: &str = "custom/new-template/agent";

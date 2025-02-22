@@ -11,32 +11,54 @@ use std::sync::Arc;
 pub struct Agent {
 	inner: Arc<AgentInner>,
 	model: ModelName,
-	resolved_model: ModelName,
+	model_resolved: ModelName,
+	agent_options_ov: Option<Arc<AgentOptions>>,
 	genai_chat_options: Arc<ChatOptions>,
 }
 
 /// Constructor from AgentInner
+///
+/// TODO: Make it DRYer
 impl Agent {
 	pub(super) fn new(agent_inner: AgentInner) -> Result<Agent> {
 		let inner = Arc::new(agent_inner);
 
-		let resolved_model = inner.resolved_model_name.clone().ok_or_else(|| Error::ModelMissing {
-			agent_path: inner.file_path.to_string(),
-		})?;
-
+		// -- Build the model and model_resolved
 		let model = inner.model_name.clone().ok_or_else(|| Error::ModelMissing {
 			agent_path: inner.file_path.to_string(),
 		})?;
+		let model_resolved = inner.agent_options.resolve_model().map(|v| v.into()).unwrap_or(model.clone());
 
-		let mut chat_options = ChatOptions::default();
-		if let Some(temp) = inner.agent_options.temperature() {
-			chat_options.temperature = Some(temp);
-		}
+		let chat_options = ChatOptions::from(&*inner.agent_options);
 
 		Ok(Agent {
 			inner,
 			model,
-			resolved_model,
+			model_resolved,
+			agent_options_ov: None,
+			genai_chat_options: chat_options.into(),
+		})
+	}
+
+	pub fn new_merge(&self, options: AgentOptions) -> Result<Agent> {
+		let options = self.options().merge_new(options)?;
+		let inner = self.inner.clone();
+
+		// -- Build the model and model_resolved
+		let model = options.model().map(ModelName::from).ok_or_else(|| Error::ModelMissing {
+			agent_path: inner.file_path.to_string(),
+		})?;
+		let model_resolved = options.resolve_model().map(|v| v.into()).unwrap_or(model.clone());
+
+		// -- Build the genai chat optoins
+		let chat_options = ChatOptions::from(&options);
+
+		// -- Returns
+		Ok(Agent {
+			inner,
+			model,
+			model_resolved,
+			agent_options_ov: Some(Arc::new(options)),
 			genai_chat_options: chat_options.into(),
 		})
 	}
@@ -47,16 +69,26 @@ impl Agent {
 	pub fn model(&self) -> &ModelName {
 		&self.model
 	}
-	pub fn resolved_model(&self) -> &ModelName {
-		&self.resolved_model
+
+	pub fn model_resolved(&self) -> &ModelName {
+		&self.model_resolved
 	}
 
 	pub fn genai_chat_options(&self) -> &ChatOptions {
 		&self.genai_chat_options
 	}
 
-	pub fn options(&self) -> &AgentOptions {
-		&self.inner.agent_options
+	pub fn options(&self) -> Arc<AgentOptions> {
+		self.agent_options_ov
+			.clone()
+			.unwrap_or_else(|| self.inner.agent_options.clone())
+	}
+
+	pub fn options_as_ref(&self) -> &AgentOptions {
+		self.agent_options_ov
+			.as_ref()
+			.map(|o| o.as_ref())
+			.unwrap_or(&self.inner.agent_options)
 	}
 
 	pub fn name(&self) -> &str {
@@ -109,11 +141,10 @@ pub(super) struct AgentInner {
 	pub file_name: String,
 	pub file_path: String,
 
-	pub agent_options: AgentOptions,
+	pub agent_options: Arc<AgentOptions>,
 
 	/// The model that came from the options
 	pub model_name: Option<ModelName>,
-	pub resolved_model_name: Option<ModelName>,
 
 	pub before_all_script: Option<String>,
 

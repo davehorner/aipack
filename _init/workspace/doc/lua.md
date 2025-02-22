@@ -9,7 +9,7 @@
 <br/>
 
 - In the `# Before All` stage
-  - `inputs` - The list of inputs given to the run command (in solo mode, only one)
+  - `inputs` - The list of inputs given to the run command
     - When `-f "**/some/glob*.*"` is used, each input will be the matching `FileMeta` object.
 <br/>
 
@@ -36,6 +36,8 @@ The utils top module is comprised of the following submodules.
 
 See [FileRecord](#filerecord), [FileMeta](#filemeta), [MdSection](#mdsection) for return types.
 
+All relative paths are relative to the workspace dir, which is the parent dir of the `.devai/` folder. 
+
 ```lua
 -- Load file text content and return its FileRecord (See below), with `.content`
 local file = utils.file.load("doc/some-file.md")                -- FileRecord
@@ -47,12 +49,17 @@ utils.file.save("doc/some-file.md", "some new content")         -- void (no retu
 utils.file.append("doc/some-file.md", "some new content")       -- void (no return for now)
 
 -- List files matching a glob pattern
+--   (file.path will be relative to devai workspace dir)
 local all_doc_files = utils.file.list("doc/**/*.md")            -- {FileMeta, ...}
 
--- List files and load their content
+-- List files matching a glob pattern and options (for now only base_dir)
+--   (file.path will be relative to base dir, which is relative to workspace dir)
+local all_doc_files = utils.file.list("**/*.md", {base_dir: "doc/})            -- {FileMeta, ...}
+
+-- List files and load their content (or with the options as well)
 local all_files = utils.file.list_load({"doc/**/*.md", "src/**/*.rs"})           -- {FileRecord, ...}
 
--- Get the first file reference matching a glob pattern
+-- Get the first file reference matching a glob pattern (or with options as well)
 local first_doc_file = utils.file.first("doc/**/*.md")          -- FileMeta | Nil
 
 -- Ensure a file exists by creating it if not found
@@ -66,6 +73,8 @@ local sections = utils.file.load_md_sections("doc/readme.md", "# Summary")
 ```
 
 ### utils.path
+
+All relative paths are relative to the workspace dir, which is the parent dir of the `.devai/` folder. 
 
 ```lua
 -- Check if a path exists
@@ -135,6 +144,8 @@ utils.md.extract_blocks(md_content: string) -> Vec<MdBlock>
 utils.md.extract_blocks(md_content: string, lang: string) -> Vec<MdBlock>
 -- Extract blocks (with or without language, and extrude: content, which the remaining content)
 utils.md.extract_blocks(md_content: String, {lang: string, extrude: "content"})
+-- Extract, parse, and merge the `#!meta`, and return the value and the concatenated remaining text.
+local meta, remain = utils.md.extract_emai(md_content: String, {lang: string, extrude: "content"})
 
 -- If content starts with ```, it will remove the first and last ```, and return the content in between
 -- Otherwise, it returns the original content
@@ -254,7 +265,7 @@ All Lua scripts get the `CTX` table in scope to get the path of the runtime and 
 
 - All paths are relative to `WORKSPACE_DIR`
 - The `AGENT_NAME` is the name provided that resolves to the `AGENT_FILE_PATH`. You can use this name to do a `devai::run(CTX.AGENT_NAME, [])`
-- These are available in `devai run ..` as well as `devai solo ...`
+- These are available in `devai run ..` 
 
 # Common Types
 

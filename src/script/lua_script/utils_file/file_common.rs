@@ -1,10 +1,10 @@
 use crate::hub::get_hub;
-use crate::run::{PathResolver, RuntimeContext};
-use crate::script::lua_script::helpers::to_vec_of_strings;
-use crate::support::AsStrsExt;
+use crate::run::{DirContext, PathResolver, RuntimeContext};
+use crate::script::lua_script::helpers::{get_value_prop_as_string, to_vec_of_strings};
+use crate::support::{files, paths, AsStrsExt};
 use crate::types::{FileMeta, FileRecord};
 use crate::{Error, Result};
-use mlua::{IntoLua, Lua, Value};
+use mlua::{FromLua, IntoLua, Lua, Value};
 use simple_fs::{ensure_file_dir, iter_files, list_files, ListOptions, SPath};
 use std::fs::write;
 use std::io::Write;
@@ -33,8 +33,13 @@ use std::io::Write;
 /// ```
 ///
 ///
-pub(super) fn file_load(lua: &Lua, ctx: &RuntimeContext, rel_path: String) -> mlua::Result<mlua::Value> {
-	let base_path = ctx.dir_context().resolve_path("", PathResolver::DevaiParentDir)?;
+pub(super) fn file_load(
+	lua: &Lua,
+	ctx: &RuntimeContext,
+	rel_path: String,
+	options: Option<Value>,
+) -> mlua::Result<mlua::Value> {
+	let base_path = compute_base_dir(ctx.dir_context(), options.as_ref())?;
 	let rel_path = SPath::new(rel_path).map_err(Error::from)?;
 
 	let file_record = FileRecord::load(&base_path, &rel_path)?;
@@ -56,7 +61,7 @@ pub(super) fn file_load(lua: &Lua, ctx: &RuntimeContext, rel_path: String) -> ml
 /// Does not return anything
 ///
 pub(super) fn file_save(_lua: &Lua, ctx: &RuntimeContext, rel_path: String, content: String) -> mlua::Result<()> {
-	let path = ctx.dir_context().resolve_path(&rel_path, PathResolver::DevaiParentDir)?;
+	let path = ctx.dir_context().resolve_path(&rel_path, PathResolver::WorkspaceDir)?;
 	ensure_file_dir(&path).map_err(Error::from)?;
 
 	write(&path, content)?;
@@ -79,7 +84,7 @@ pub(super) fn file_save(_lua: &Lua, ctx: &RuntimeContext, rel_path: String, cont
 /// Does not return anything
 ///
 pub(super) fn file_append(_lua: &Lua, ctx: &RuntimeContext, rel_path: String, content: String) -> mlua::Result<()> {
-	let path = ctx.dir_context().resolve_path(&rel_path, PathResolver::DevaiParentDir)?;
+	let path = ctx.dir_context().resolve_path(&rel_path, PathResolver::WorkspaceDir)?;
 	ensure_file_dir(&path).map_err(Error::from)?;
 
 	let mut file = std::fs::OpenOptions::new()
@@ -113,11 +118,20 @@ pub(super) fn file_ensure_exists(
 	ctx: &RuntimeContext,
 	path: String,
 	content: Option<String>,
+	options: Option<EnsureExistsOptions>,
 ) -> mlua::Result<mlua::Value> {
+	let options = options.unwrap_or_default();
 	let rel_path = SPath::new(path).map_err(Error::from)?;
-	let full_path = ctx.dir_context().resolve_path(&rel_path, PathResolver::DevaiParentDir)?;
+	let full_path = ctx.dir_context().resolve_path(&rel_path, PathResolver::WorkspaceDir)?;
 
+	// if the file does not exist, create it.
 	if !full_path.exists() {
+		simple_fs::ensure_file_dir(&full_path).map_err(|err| Error::custom(err.to_string()))?;
+		let content = content.unwrap_or_default();
+		write(&full_path, content)?;
+	}
+	// if we have the options.content_when_empty flag, if empty
+	else if options.content_when_empty && files::is_file_empty(&full_path)? {
 		let content = content.unwrap_or_default();
 		write(full_path, content)?;
 	}
@@ -150,8 +164,13 @@ pub(super) fn file_ensure_exists(
 ///
 /// To get the content of files, needs iterate and load each
 ///
-pub(super) fn file_list(lua: &Lua, ctx: &RuntimeContext, include_globs: Value) -> mlua::Result<Value> {
-	let (base_path, include_globs) = base_path_and_globs(ctx, include_globs)?;
+pub(super) fn file_list(
+	lua: &Lua,
+	ctx: &RuntimeContext,
+	include_globs: Value,
+	options: Option<Value>,
+) -> mlua::Result<Value> {
+	let (base_path, include_globs) = base_dir_and_globs(ctx, include_globs, options.as_ref())?;
 
 	let sfiles = list_files(
 		&base_path,
@@ -163,7 +182,16 @@ pub(super) fn file_list(lua: &Lua, ctx: &RuntimeContext, include_globs: Value) -
 	// Now, we put back the paths found relative to base_path
 	let sfiles = sfiles
 		.into_iter()
-		.map(|f| f.diff(&base_path))
+		.map(|f| {
+			//
+			let diff = f.diff(&base_path)?;
+			// if the diff goes back from base_path, then, we put the absolute path
+			if diff.to_str().starts_with("..") {
+				Ok(SPath::from(f))
+			} else {
+				Ok(diff)
+			}
+		})
 		.collect::<simple_fs::Result<Vec<SPath>>>()
 		.map_err(|err| crate::Error::cc("Cannot list files to base", err))?;
 
@@ -197,8 +225,13 @@ pub(super) fn file_list(lua: &Lua, ctx: &RuntimeContext, include_globs: Value) -
 ///
 /// To get the content of files, needs iterate and load each
 ///
-pub(super) fn file_list_load(lua: &Lua, ctx: &RuntimeContext, include_globs: Value) -> mlua::Result<Value> {
-	let (base_path, include_globs) = base_path_and_globs(ctx, include_globs)?;
+pub(super) fn file_list_load(
+	lua: &Lua,
+	ctx: &RuntimeContext,
+	include_globs: Value,
+	options: Option<Value>,
+) -> mlua::Result<Value> {
+	let (base_path, include_globs) = base_dir_and_globs(ctx, include_globs, options.as_ref())?;
 
 	let sfiles = list_files(
 		&base_path,
@@ -210,7 +243,15 @@ pub(super) fn file_list_load(lua: &Lua, ctx: &RuntimeContext, include_globs: Val
 	let file_records = sfiles
 		.into_iter()
 		.map(|sfile| -> Result<FileRecord> {
-			let rel_path = sfile.diff(&base_path)?;
+			//
+			let diff = sfile.diff(&base_path)?;
+			// if the diff goes back from base_path, then, we put the absolute path
+			// TODO: need to double check this
+			let (base_path, rel_path) = if diff.to_str().starts_with("..") {
+				(SPath::from(""), SPath::from(sfile))
+			} else {
+				(base_path.clone(), diff)
+			};
 			let file_record = FileRecord::load(&base_path, &rel_path)?;
 			Ok(file_record)
 		})
@@ -247,8 +288,13 @@ pub(super) fn file_list_load(lua: &Lua, ctx: &RuntimeContext, include_globs: Val
 /// ```lua
 /// let file = utils.file.load(file_meta.path)
 /// ```
-pub(super) fn file_first(lua: &Lua, ctx: &RuntimeContext, include_globs: Value) -> mlua::Result<Value> {
-	let (base_path, include_globs) = base_path_and_globs(ctx, include_globs)?;
+pub(super) fn file_first(
+	lua: &Lua,
+	ctx: &RuntimeContext,
+	include_globs: Value,
+	options: Option<Value>,
+) -> mlua::Result<Value> {
+	let (base_path, include_globs) = base_dir_and_globs(ctx, include_globs, options.as_ref())?;
 	let mut sfiles = iter_files(
 		&base_path,
 		Some(&include_globs.x_as_strs()),
@@ -269,14 +315,59 @@ pub(super) fn file_first(lua: &Lua, ctx: &RuntimeContext, include_globs: Value) 
 	Ok(res)
 }
 
+// region:    --- Options
+#[derive(Debug, Default)]
+pub struct EnsureExistsOptions {
+	/// Set the eventual provided content if the file is empty (only whitespaces)
+	content_when_empty: bool,
+}
+
+impl FromLua for EnsureExistsOptions {
+	fn from_lua(value: Value, _lua: &Lua) -> mlua::Result<Self> {
+		let table = value
+			.as_table()
+			.ok_or(crate::Error::custom("EnsureExistsOptions should be a table"))?;
+		let set_content_when_empty = table.get("content_when_empty")?;
+		Ok(Self {
+			content_when_empty: set_content_when_empty,
+		})
+	}
+}
+
+// endregion: --- Options
+
 // region:    --- Support
 
 /// return (base_path, globs)
-fn base_path_and_globs(ctx: &RuntimeContext, include_globs: Value) -> Result<(SPath, Vec<String>)> {
-	let base_path = ctx.dir_context().resolve_path("", PathResolver::DevaiParentDir)?;
+fn base_dir_and_globs(
+	ctx: &RuntimeContext,
+	include_globs: Value,
+	options: Option<&Value>,
+) -> Result<(SPath, Vec<String>)> {
 	let globs: Vec<String> = to_vec_of_strings(include_globs, "file::file_list globs argument")?;
+	let base_dir = compute_base_dir(ctx.dir_context(), options)?;
+	Ok((base_dir, globs))
+}
 
-	Ok((base_path, globs))
+fn compute_base_dir(dir_context: &DirContext, options: Option<&Value>) -> Result<SPath> {
+	// the default base_path is the workspace dir.
+	let workspace_path = dir_context.resolve_path("", PathResolver::WorkspaceDir)?;
+
+	// if options, try to resolve the options.base_dir
+	let base_dir = get_value_prop_as_string(options, "base_dir", "utils.file... options fail")?;
+
+	let base_dir = match base_dir {
+		Some(base_dir) => {
+			if paths::is_relative(&base_dir) {
+				workspace_path.join_str(&base_dir)
+			} else {
+				SPath::from(base_dir)
+			}
+		}
+		None => workspace_path,
+	};
+
+	Ok(base_dir)
 }
 
 // endregion: --- Support
@@ -287,7 +378,7 @@ fn base_path_and_globs(ctx: &RuntimeContext, include_globs: Value) -> Result<(SP
 mod tests {
 	type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>; // For tests.
 
-	use crate::_test_support::{assert_contains, run_reflective_agent, SANDBOX_01_DIR};
+	use crate::_test_support::{assert_contains, eval_lua, run_reflective_agent, setup_lua, SANDBOX_01_DIR};
 	use std::path::Path;
 	use value_ext::JsonValueExt as _;
 
@@ -362,6 +453,92 @@ mod tests {
 		assert_eq!(res_paths.len(), 2, "result length");
 		assert_contains(&res_paths, "sub-dir-a/sub-sub-dir/agent-hello-3.devai");
 		assert_contains(&res_paths, "sub-dir-a/sub-sub-dir/agent-hello-3.devai");
+
+		Ok(())
+	}
+
+	#[tokio::test]
+	async fn test_lua_file_list_glob_abs_with_wild() -> Result<()> {
+		// -- Fixtures
+		let lua = setup_lua(super::super::init_module, "file")?;
+		let dir = Path::new("./tests-data/config");
+		let dir = dir
+			.canonicalize()
+			.map_err(|err| format!("Cannot canonicalize {dir:?} cause: {err}"))?;
+
+		// This is the rust Path logic
+		let glob = format!("{}/*.*", dir.to_string_lossy());
+		let code = format!(r#"return utils.file.list("{glob}");"#);
+
+		// -- Exec
+		let _res = eval_lua(&lua, &code)?;
+
+		// -- Check
+		// TODO:
+
+		Ok(())
+	}
+
+	#[test]
+	fn test_lua_file_list_glob_with_base_dir_all_nested() -> Result<()> {
+		// -- Setup & Fixtures
+		let lua = setup_lua(super::super::init_module, "file")?;
+		let lua_code = r#"
+local files = utils.file.list({"**/*.*"}, {base_dir = "sub-dir-a"})
+return { files = files }
+		"#;
+
+		// -- Exec
+		let res = eval_lua(&lua, lua_code)?;
+
+		// -- Check
+		let files = res
+			.get("files")
+			.ok_or("Should have .files")?
+			.as_array()
+			.ok_or("file should be array")?;
+
+		assert_eq!(files.len(), 2, ".files.len() should be 2");
+		// NOTE: Here we assume the order will be deterministic and the same across OSes (tested on Mac).
+		//       This logic might need to be changed, or actually, the list might need to have a fixed order.
+		assert_eq!(
+			"agent-hello-2.devai",
+			files.first().ok_or("Should have a least one file")?.x_get_str("name")?
+		);
+		assert_eq!(
+			"agent-hello-3.devai",
+			files.get(1).ok_or("Should have a least two file")?.x_get_str("name")?
+		);
+
+		Ok(())
+	}
+
+	#[test]
+	fn test_lua_file_list_glob_with_base_dir_one_level() -> Result<()> {
+		// -- Setup & Fixtures
+		let lua = setup_lua(super::super::init_module, "file")?;
+		let lua_code = r#"
+local files = utils.file.list({"agent-hello-*.devai"}, {base_dir = "sub-dir-a"})
+return { files = files }
+		"#;
+
+		// -- Exec
+		let res = eval_lua(&lua, lua_code)?;
+
+		// -- Check
+		let files = res
+			.get("files")
+			.ok_or("Should have .files")?
+			.as_array()
+			.ok_or("file should be array")?;
+
+		assert_eq!(files.len(), 1, ".files.len() should be 1");
+		// NOTE: Here we assume the order will be deterministic and the same across OSes (tested on Mac).
+		//       This logic might need to be changed, or actually, the list might need to have a fixed order.
+		assert_eq!(
+			"agent-hello-2.devai",
+			files.first().ok_or("Should have a least one file")?.x_get_str("name")?
+		);
 
 		Ok(())
 	}
