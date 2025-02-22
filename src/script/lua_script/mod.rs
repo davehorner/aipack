@@ -16,10 +16,12 @@ mod utils_rust;
 mod utils_text;
 mod utils_web;
 mod devai_config;
-
 mod lua_engine;
 
 pub use lua_engine::*;
+
+#[cfg(test)]
+pub use helpers::*;
 
 // endregion: --- Modules
 

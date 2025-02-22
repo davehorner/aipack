@@ -1,6 +1,7 @@
 use crate::hub::{get_hub, HubEvent};
 use crate::run::path_consts::CUSTOM_LUA_DIR;
 use crate::run::{get_devai_base_dir, RuntimeContext};
+use crate::script::lua_script::helpers::{process_lua_eval_result, serde_to_lua_value};
 use crate::script::lua_script::{
 	utils_cmd, utils_code, utils_devai, utils_file, utils_git, utils_hbs, utils_html, utils_json, utils_lua, utils_md,
 	utils_path, utils_rust, utils_text, utils_web,
@@ -58,19 +59,7 @@ impl LuaEngine {
 		let res = chunck.eval::<Value>();
 		// let res = res?;
 
-		let res = match res {
-			Ok(res) => res,
-			Err(err) => return Err(Error::from_error_with_script(&err, script)),
-		};
-
-		let res = match res {
-			// This is when we d with pcall(...), see test_lua_json_parse_invalid
-			Value::Error(err) => {
-				return Err(Error::from_error_with_script(&err, script));
-				// return Err(Error::from(&*err));
-			}
-			res => res,
-		};
+		let res = process_lua_eval_result(&self.lua, res, script)?;
 
 		Ok(res)
 	}
@@ -86,11 +75,7 @@ impl LuaEngine {
 	///            converts serde_json::Value::Null to Lua user data, and not mlua::Value::Nil,
 	///            and we want it for devai.
 	pub fn serde_to_lua_value(&self, val: serde_json::Value) -> Result<Value> {
-		let res = match val {
-			serde_json::Value::Null => Value::Nil,
-			other => self.lua.to_value(&other)?,
-		};
-		Ok(res)
+		serde_to_lua_value(&self.lua, val)
 	}
 
 	/// Just passthrough for into_lua
@@ -233,7 +218,8 @@ fn init_utils(lua_vm: &Lua, runtime_context: &RuntimeContext) -> Result<()> {
 		html,
 		cmd,
 		lua,
-		code
+		code,
+		hbs
 	);
 
 	let globals = lua_vm.globals();
